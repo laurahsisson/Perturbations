@@ -3,6 +3,7 @@ import pandas as pd
 import smiles
 import torch
 
+
 # x data is formatted as celltype (string) and smiles
 # y data is tensor of length 18211 containing DGE for all genes
 def get_train():
@@ -14,10 +15,11 @@ def get_train():
     for index, row in df.iterrows():
         ct = row["cell_type"]
         sm = smiles.get(row["sm_name"])
-        x.append((ct,sm))
+        x.append((ct, sm))
         y.append(row[5:].values.astype(float))
 
-    return x, y        
+    return x, y
+
 
 # returns x as above
 def get_test():
@@ -27,9 +29,10 @@ def get_test():
     for index, row in df.iterrows():
         ct = row["cell_type"]
         sm = smiles.get(row["sm_name"])
-        x.append((ct,sm))
+        x.append((ct, sm))
 
     return x
+
 
 if __name__ == "__main__":
     train_x, train_y = get_train()

@@ -5,6 +5,7 @@ fname = 'smiles.json'
 
 mapping = dict()
 
+
 def build():
     global mapping
 
@@ -20,7 +21,7 @@ def load():
     global mapping
 
     print("Loading smiles from disk.")
-    with open(fname,'r') as f:
+    with open(fname, 'r') as f:
         mapping = json.load(f)
 
 
@@ -29,6 +30,7 @@ def get(sm_name):
         load()
 
     return mapping[sm_name]
+
 
 if __name__ == "__main__":
     build()

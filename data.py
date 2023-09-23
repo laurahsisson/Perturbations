@@ -6,6 +6,7 @@ import torch
 # x data is formatted as celltype (string) and smiles
 # y data is tensor of length 18211 containing DGE for all genes
 def get_train():
+    print("Loading train data.")
     df = pd.read_parquet("data/de_train.parquet")
     x = []
     y = []
@@ -20,6 +21,7 @@ def get_train():
 
 # returns x as above
 def get_test():
+    print("Loading test data.")
     df = pd.read_csv("data/id_map.csv")
     x = []
     for index, row in df.iterrows():

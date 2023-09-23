@@ -1,20 +1,38 @@
 import pandas as pd
 
 import smiles
+import celltype
 import torch
+
+import enum
+
+class Include(enum.Enum):
+    All = 1,
+    NonEvaluation = 2,
+    Evaluation = 3,
 
 
 # x data is formatted as celltype (string) and smiles
 # y data is tensor of length 18211 containing DGE for all genes
-def get_train():
+def get_train(include=Include.All):
     print("Loading train data.")
     df = pd.read_parquet("data/de_train.parquet")
     x = []
     y = []
 
     for index, row in df.iterrows():
+        if row["control"]:
+            continue
         ct = row["cell_type"]
         sm = smiles.get(row["sm_name"])
+
+        is_evaluation = celltype.is_evaluation(ct)
+        if is_evaluation and include == Include.NonEvaluation:
+            continue
+
+        if not is_evaluation and include == Include.Evaluation:
+            continue
+
         x.append((ct, sm))
         y.append(row[5:].values.astype(float))
 

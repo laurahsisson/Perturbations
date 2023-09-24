@@ -18,6 +18,7 @@ def one_hot(cell_type):
 def is_evaluation(cell_type):
     return cell_type in evaluation_cell_types
 
+
 if __name__ == "__main__":
     for index, row in df.iterrows():
         print(one_hot(row["cell_type"]))

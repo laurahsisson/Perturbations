@@ -7,6 +7,7 @@ fname = 'smiles.json'
 mapping = dict()
 all_smiles = list()
 
+
 def build():
     global mapping
 
@@ -33,6 +34,7 @@ def get(sm_name):
         load()
 
     return mapping[sm_name]
+
 
 def one_hot(sm_name):
     if not mapping:

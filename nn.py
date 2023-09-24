@@ -53,18 +53,18 @@ mfpgen = rdkit.Chem.rdFingerprintGenerator.GetMorganGenerator(radius=4,
 
 train_x_entries, train_y = data.get_train(data.Include.All)
 train_weights = torch.tensor([weight(x_entry) for x_entry in train_x_entries])
-train_x = to_tensor([convert_to_input(smiles.one_hot,entry) for entry in train_x_entries])
+train_x = to_tensor([convert_to_input(get_fingerprint,entry) for entry in train_x_entries])
 train_y = to_tensor(train_y)
 
 eval_x_entries, eval_y = data.get_train(data.Include.Evaluation)
-eval_x = to_tensor([convert_to_input(smiles.one_hot,entry) for entry in eval_x_entries])
+eval_x = to_tensor([convert_to_input(get_fingerprint,entry) for entry in eval_x_entries])
 eval_y = to_tensor(eval_y)
 
 model = torch.nn.Sequential(torch.nn.Linear(train_x.shape[1], embed_size), torch.nn.ReLU(
 ), torch.nn.Dropout(p=0), torch.nn.Linear(embed_size, train_y.shape[1]))
 
 loss_fn = torch.nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=.0001)
+optimizer = torch.optim.Adam(model.parameters(), lr=.001)
 
 
 def weighted_mse(y_pred, y_true, weights):

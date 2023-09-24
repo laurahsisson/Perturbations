@@ -29,20 +29,27 @@ def load():
     all_smiles = list(sorted(mapping.values()))
 
 
-def get(sm_name):
+def _load():
     if not mapping:
         load()
+
+def get(sm_name):
+    _load()
 
     return mapping[sm_name]
 
 
 def one_hot(sm_name):
-    if not mapping:
-        load()
+    _load()
 
     idx = torch.tensor(all_smiles.index(sm_name))
     return torch.nn.functional.one_hot(idx, num_classes=len(all_smiles))
 
+
+def count():
+    _load()
+
+    return len(all_smiles)
 
 if __name__ == "__main__":
     build()

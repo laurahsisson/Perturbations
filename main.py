@@ -1,7 +1,7 @@
 import pandas as pd
 
-import smiles
 import celltype
+import smiles
 
 # sm_names_to_smiles = dict()
 df = pd.read_parquet("data/de_train.parquet")

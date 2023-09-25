@@ -1,27 +1,28 @@
+import os
 import pickle
-import sklearn.metrics
+
 import matplotlib.pyplot as plt
-from ray.tune.schedulers import ASHAScheduler
-from ray.tune.search.hyperopt import HyperOptSearch
-from ray import train, tune
+import numpy as np
+import pandas as pd
 import rdkit
 import rdkit.Chem.rdFingerprintGenerator
-
-import os
-import pandas as pd
-import data
-import celltype
-import tqdm
-import numpy as np
 import sklearn
-import sklearn.linear_model
-import sklearn.kernel_ridge
 import sklearn.decomposition
-import submission
-import smiles
-import mrrmse
+import sklearn.kernel_ridge
+import sklearn.linear_model
+import sklearn.metrics
 import torch
+import tqdm
 from hyperopt import hp
+from ray import train, tune
+from ray.tune.schedulers import ASHAScheduler
+from ray.tune.search.hyperopt import HyperOptSearch
+
+import celltype
+import data
+import mrrmse
+import smiles
+import submission
 
 os.environ["RAY_DEDUP_LOGS"] = "0"
 
@@ -99,11 +100,11 @@ class EmbNN(torch.nn.Module):
         ct_idx = torch.argmax(cts, dim=1)
         smls_idx = torch.argmax(smlss, dim=1)
         # Embed categorical feature 1
-        cat_embed1 = self.embedding1(ct_idx.long())
+        ct_embed = self.embedding1(ct_idx.long())
         # Embed categorical feature 2
-        cat_embed2 = self.embedding2(smls_idx.long())
-        x = torch.cat((cat_embed1.view(ct_idx.size(0), -1), cat_embed2.view(
-            smls_idx.size(0), -1)), dim=1)  # Concatenate with continuous input
+        smiles_embed = self.embedding2(smls_idx.long())
+        # Concatenate with continuous input
+        x = torch.cat((ct_embed, smiles_embed), dim=1)
         return self.out(x)
 
 
@@ -114,7 +115,7 @@ def weighted_mse(y_pred, y_true, weights):
     return loss
 
 
-epochs = 10000
+epochs = 1000
 num_samples = 500
 
 
@@ -137,6 +138,7 @@ def train_model(config, input_data):
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])
 
     model.train()
+    # Early stopping was not good for scoring
     for i in range(epochs):
         optimizer.zero_grad()
         train_pred = model(input_data["train_x_ct"],
@@ -152,6 +154,7 @@ def train_model(config, input_data):
         train.report({"mrrmse": score})
         loss.backward()
         optimizer.step()
+        config["completed"] = i
 
         if i % 5 == 0:
             # This saves the model to the trial directory
@@ -198,8 +201,8 @@ results = tuner.fit()
 best_result = results.get_best_result(metric, mode=mode)
 state_dict = torch.load(os.path.join(best_result.path, "model.pt"))
 
-print("CONFIG:",best_result.config)
-print("METRICS:",best_result.metrics)
+print("CONFIG:", best_result.config)
+print("METRICS:", best_result.metrics)
 model = EmbNN(best_result.config)
 model.load_state_dict(state_dict)
 

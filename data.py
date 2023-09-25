@@ -1,10 +1,10 @@
-import pandas as pd
+import enum
 
-import smiles
-import celltype
+import pandas as pd
 import torch
 
-import enum
+import celltype
+import smiles
 
 
 class Include(enum.Enum):

@@ -1,8 +1,6 @@
-import pandas as pd
-
-import tqdm
-
 import numpy as np
+import pandas as pd
+import tqdm
 
 
 def make(fname, pred):

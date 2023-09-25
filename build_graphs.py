@@ -1,9 +1,10 @@
-from ogb.utils import smiles2graph
-import tqdm
-import data
-import torch_geometric as pyg
 import torch
+import torch_geometric as pyg
+import tqdm
+from ogb.utils import smiles2graph
+
 import celltype
+import data
 import mrrmse
 
 
@@ -87,10 +88,6 @@ class EmbNN(torch.nn.Module):
         return self.out(combined_res)
 
 
-model = EmbNN()
-optimizer = torch.optim.Adam(model.parameters(), lr=.00001)
-loss_fn = torch.nn.MSELoss()
-
 train_x_entries, train_y = data.get_train(data.Include.All)
 train_loader = make_loader(train_x_entries, train_y, 64)
 
@@ -98,30 +95,34 @@ eval_x_entries, eval_y = data.get_train(data.Include.Evaluation)
 eval_loader = make_loader(eval_x_entries, eval_y, len(eval_x_entries))
 
 
-def do_train_epoch():
-    model.train()
-    for batch_data in train_loader:
-        optimizer.zero_grad()
+def train_model(config, input_data):
+    def do_train_epoch():
+        model.train()
+        for batch_data in train_loader:
+            optimizer.zero_grad()
 
-        pred = model(batch_data)
-        loss = loss_fn(pred, batch_data.y)
+            pred = model(batch_data)
+            loss = loss_fn(pred, batch_data.y)
 
-        loss.backward()
-        optimizer.step()
-    return loss
+            loss.backward()
+            optimizer.step()
+        return loss
 
+    model = EmbNN()
+    optimizer = torch.optim.Adam(model.parameters(), lr=.00001)
+    loss_fn = torch.nn.MSELoss()
 
-best_loss = float('inf')
-eps = 1e-6
-for _ in tqdm.tqdm(range(100000)):
-    loss = do_train_epoch()
-    print(loss)
-    if loss + eps < best_loss:
-        best_loss = loss
-    else:
-        break
+    best_loss = float('inf')
+    eps = 1e-6
+    for _ in tqdm.tqdm(range(100000)):
+        loss = do_train_epoch()
+        print(loss)
+        if loss + eps < best_loss:
+            best_loss = loss
+        else:
+            break
 
-eval_batch = next(iter(eval_loader))
-with torch.no_grad():
-    model.eval()
-    print(mrrmse.vectorized(model(eval_batch), eval_batch.y))
+    eval_batch = next(iter(eval_loader))
+    with torch.no_grad():
+        model.eval()
+        print(mrrmse.vectorized(model(eval_batch), eval_batch.y))

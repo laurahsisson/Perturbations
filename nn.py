@@ -114,8 +114,8 @@ def weighted_mse(y_pred, y_true, weights):
     return loss
 
 
-epochs = 1000
-num_samples = 100
+epochs = 10000
+num_samples = 500
 
 
 def train_model(config, input_data):
@@ -124,11 +124,14 @@ def train_model(config, input_data):
     config["out_dim"] = 18211
     has_decomposer = config["reduction"]["type"] == "tsvd"
     if has_decomposer:
-        config["out_dim"] = int(config["reduction"]["components"])
-        decomposer = sklearn.decomposition.TruncatedSVD(n_components=config["out_dim"]).fit(input_data["train_y"])
-        _train_y = torch.from_numpy(decomposer.transform(input_data["train_y"]))
+        # Cannot reduce to a dimension greater than the training set.
+        config["out_dim"] = min(
+            int(config["reduction"]["components"]), len(_train_y))
+        decomposer = sklearn.decomposition.TruncatedSVD(
+            n_components=config["out_dim"])
+        _train_y = torch.from_numpy(
+            decomposer.fit_transform(input_data["train_y"]))
         torch.save(decomposer, "./decomposer.pkl")
-        
 
     model = EmbNN(config)
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])
@@ -138,17 +141,13 @@ def train_model(config, input_data):
         optimizer.zero_grad()
         train_pred = model(input_data["train_x_ct"],
                            input_data["train_x_smls"])
-        if train_pred.shape != _train_y.shape:
-            print("DDD", config["out_dim"], input_data["train_y"].shape, train_pred.shape, _train_y.shape, decomposer.components_.shape)
-            raise RuntimeError("")
         loss = weighted_mse(
             train_pred, _train_y, input_data["train_weights"])
-
         eval_pred = model(
             input_data["eval_x_ct"], input_data["eval_x_smls"]).detach()
         if has_decomposer:
-            eval_pred = torch.tensor(
-                decomposer.inverse_transform(eval_pred.numpy()))
+            eval_pred = torch.from_numpy(
+                decomposer.inverse_transform(eval_pred))
         score = mrrmse.vectorized(eval_pred, input_data["eval_y"]).item()
         train.report({"mrrmse": score})
         loss.backward()
@@ -166,8 +165,8 @@ space = {
     "embed_size": hp.quniform("embed_size", 2, 100, 1),
     "reduction": hp.choice('reduction', [
         {'type': 'none'},
-        {'type': 'tsvd', 'components': hp.qloguniform(
-            'components', 0, 8, 1)},
+        # {'type': 'tsvd', 'components': hp.qloguniform(
+        #     'components', 0, 7, 1)},
     ]),
 }
 
@@ -192,14 +191,15 @@ tuner = tune.Tuner(
         scheduler=scheduler
     ),
     run_config=train.RunConfig(
-        failure_config=train.FailureConfig(fail_fast=True))
+        failure_config=train.FailureConfig(fail_fast=False))
 )
 results = tuner.fit()
 
 best_result = results.get_best_result(metric, mode=mode)
 state_dict = torch.load(os.path.join(best_result.path, "model.pt"))
 
-print(best_result.config, best_result.metrics)
+print("CONFIG:",best_result.config)
+print("METRICS:",best_result.metrics)
 model = EmbNN(best_result.config)
 model.load_state_dict(state_dict)
 
@@ -207,12 +207,12 @@ model.load_state_dict(state_dict)
 test_x_entries = data.get_test()
 _, test_x_ct, test_x_smls = split_entries(test_x_entries)
 
-# model.eval()
-# with torch.no_grad():
-#     pred = model(test_x_ct, test_x_smls).numpy()
-#     if best_result.config["reduction"]["type"] == "tsvd":
-#         decomposer = torch.load(os.path.join(
-#             best_result.path, "decomposer.pkl"))
-#         pred = decomposer.inverse_transform(pred)
+model.eval()
+with torch.no_grad():
+    pred = model(test_x_ct, test_x_smls).numpy()
+    if best_result.config["reduction"]["type"] == "tsvd":
+        decomposer = torch.load(os.path.join(
+            best_result.path, "decomposer.pkl"))
+        pred = decomposer.inverse_transform(pred)
 
-#     submission.make("dictionary", pred)
+    submission.make("dictionary", pred)

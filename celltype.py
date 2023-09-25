@@ -15,6 +15,14 @@ def one_hot(cell_type):
     return torch.nn.functional.one_hot(idx, num_classes=len(all_cell_types))
 
 
+def idx(cell_type):
+    return torch.tensor(all_cell_types.index(cell_type))
+
+
+def count():
+    return len(all_cell_types)
+
+
 def is_evaluation(cell_type):
     return cell_type in evaluation_cell_types
 

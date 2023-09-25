@@ -33,6 +33,7 @@ def _load():
     if not mapping:
         load()
 
+
 def get(sm_name):
     _load()
 
@@ -50,6 +51,7 @@ def count():
     _load()
 
     return len(all_smiles)
+
 
 if __name__ == "__main__":
     build()

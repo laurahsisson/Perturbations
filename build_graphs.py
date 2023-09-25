@@ -1,11 +1,18 @@
+import os
 import torch
 import torch_geometric as pyg
 import tqdm
+from hyperopt import hp
 from ogb.utils import smiles2graph
+from ray import train, tune
+from ray.tune.schedulers import ASHAScheduler
+from ray.tune.search.hyperopt import HyperOptSearch
+import submission
 
 import celltype
 import data
 import mrrmse
+import numpy as np
 
 
 def to_torch(smiles):
@@ -74,12 +81,12 @@ class MessagePassing(torch.nn.Module):
 
 
 class EmbNN(torch.nn.Module):
-    def __init__(self, ct_emb_size=2, mpnn_emb_size=64, hidden_dim=32):
+    def __init__(self, config):
         super(EmbNN, self).__init__()
-        self.ct_embed = torch.nn.Embedding(celltype.count(), ct_emb_size)
-        self.mpnn = MessagePassing(mpnn_emb_size)
+        self.ct_embed = torch.nn.Embedding(celltype.count(), int(config["ct_emb_size"]))
+        self.mpnn = MessagePassing(int(config["mpnn_emb_size"]))
         self.out = make_sequential(
-            ct_emb_size+mpnn_emb_size, hidden_dim, num_classes())
+            int(config["ct_emb_size"] + config["mpnn_emb_size"]), int(config["hidden_dim"]), num_classes())
 
     def forward(self, db):
         ct_res = self.ct_embed(db.ct)
@@ -94,11 +101,19 @@ train_loader = make_loader(train_x_entries, train_y, 64)
 eval_x_entries, eval_y = data.get_train(data.Include.Evaluation)
 eval_loader = make_loader(eval_x_entries, eval_y, len(eval_x_entries))
 
+test_x_entries = data.get_test()
+# Placeholder values to build loader.
+test_y = np.empty((len(test_x_entries),num_classes()))
+test_loader = make_loader(test_x_entries, test_y, len(test_x_entries))
+
+
+epochs = 100
+num_samples = 100
 
 def train_model(config, input_data):
     def do_train_epoch():
         model.train()
-        for batch_data in train_loader:
+        for batch_data in input_data["train_loader"]:
             optimizer.zero_grad()
 
             pred = model(batch_data)
@@ -108,21 +123,68 @@ def train_model(config, input_data):
             optimizer.step()
         return loss
 
-    model = EmbNN()
-    optimizer = torch.optim.Adam(model.parameters(), lr=.00001)
+    def eval_score():
+        assert len(input_data["eval_loader"]) == 1
+        eval_batch = next(iter(input_data["eval_loader"]))
+        with torch.no_grad():
+            model.eval()
+            return mrrmse.vectorized(model(eval_batch), eval_batch.y).item()
+
+    model = EmbNN(config)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])
     loss_fn = torch.nn.MSELoss()
 
     best_loss = float('inf')
-    eps = 1e-6
-    for _ in tqdm.tqdm(range(100000)):
-        loss = do_train_epoch()
-        print(loss)
-        if loss + eps < best_loss:
-            best_loss = loss
-        else:
-            break
+    for i in range(epochs):
+        do_train_epoch()
+        train.report({"mrrmse": eval_score()})
+        config["completed"] = i
+        if i % 5 == 0:
+            # This saves the model to the trial directory
+            torch.save(model.state_dict(), "./model.pt")
 
-    eval_batch = next(iter(eval_loader))
-    with torch.no_grad():
-        model.eval()
-        print(mrrmse.vectorized(model(eval_batch), eval_batch.y))
+space = {
+    "lr": hp.loguniform("lr", -10, -1),
+    "ct_emb_size": hp.quniform("ct_emb_size", 2, 100, 1),
+    "mpnn_emb_size": hp.quniform("mpnn_emb_size", 2, 100, 1),
+    "hidden_dim": hp.quniform("hidden_dim", 2, 100, 1),
+}
+
+metric = "mrrmse"
+mode = "min"
+hyperopt_search = HyperOptSearch(space, metric=metric, mode=mode)
+scheduler = ASHAScheduler(metric=metric, mode=mode, max_t=epochs)
+input_data = {
+    "train_loader": train_loader,
+    "eval_loader": eval_loader,
+}
+
+tuner = tune.Tuner(
+    tune.with_parameters(train_model, input_data=input_data),
+    tune_config=tune.TuneConfig(
+        num_samples=num_samples,
+        search_alg=hyperopt_search,
+        scheduler=scheduler
+    ),
+    run_config=train.RunConfig(
+        failure_config=train.FailureConfig(fail_fast=False))
+)
+results = tuner.fit()
+
+best_result = results.get_best_result(metric, mode=mode)
+print("CONFIG:", best_result.config)
+print("METRICS:", best_result.metrics)
+
+state_dict = torch.load(os.path.join(best_result.path, "model.pt"))
+model = EmbNN(best_result.config)
+model.load_state_dict(state_dict)
+
+assert len(test_loader) == 1
+test_batch = next(iter(test_loader))
+with torch.no_grad():
+    model.eval()
+    pred = model(test_batch).numpy()
+    submission.make("gnn", pred)
+
+
+

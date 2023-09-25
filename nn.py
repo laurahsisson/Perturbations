@@ -24,12 +24,8 @@ import mrrmse
 import smiles
 import submission
 
-os.environ["RAY_DEDUP_LOGS"] = "0"
-
 
 # https://github.com/rdkit/rdkit/discussions/3863
-
-
 def to_numpy(fp):
     return np.frombuffer(bytes(fp.ToBitString(), 'utf-8'), 'u1') - ord('0')
 

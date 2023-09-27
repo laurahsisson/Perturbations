@@ -1,18 +1,20 @@
 import os
+
+import numpy as np
 import torch
 import torch_geometric as pyg
 import tqdm
 from hyperopt import hp
+from hyperopt.pyll import scope
 from ogb.utils import smiles2graph
 from ray import train, tune
 from ray.tune.schedulers import ASHAScheduler
 from ray.tune.search.hyperopt import HyperOptSearch
-import submission
 
 import celltype
 import data
 import mrrmse
-import numpy as np
+import submission
 
 
 def to_torch(smiles):
@@ -34,7 +36,7 @@ def make_loader(data_x_entries, data_y, bsz):
     return pyg.loader.DataLoader(all_data, batch_size=bsz)
 
 
-def make_sequential(input_dim, hidden_dim, output_dim, dropout=0):
+def make_sequential(input_dim, hidden_dim, output_dim, dropout):
     return torch.nn.Sequential(torch.nn.Linear(input_dim, hidden_dim), torch.nn.ReLU(), torch.nn.Dropout(p=dropout), torch.nn.Linear(hidden_dim, output_dim))
 
 
@@ -51,28 +53,31 @@ def num_classes():
 
 class MessagePassing(torch.nn.Module):
 
-    def __init__(self, embedding_size, num_convs=3, hidden_dim=128):
+    def __init__(self, config):
         super(MessagePassing, self).__init__()
 
         # In order to tie the weights of all convolutions, the input is first
         # padded with zeros to reach embedding size.
         self.pad = torch.nn.ZeroPad2d(
-            (0, embedding_size - num_node_features(), 0, 0))
+            (0, config["mpnn_emb_size"] - num_node_features(), 0, 0))
 
-        self.gcn = pyg.nn.GINConv(make_sequential(
-            embedding_size, hidden_dim, embedding_size))
-        self.gcn.to(device)
-        self.num_convs = num_convs
+        self.gins = []
+        for _ in range(config["conv_layers"]):
+            self.gins.append(pyg.nn.GINConv(make_sequential(config["mpnn_emb_size"], config["conv_hidden_dim"], config["mpnn_emb_size"], config["dropout"])).to(device))
+
+        self.num_convs = config["num_convs"]
 
         # The pooling returns 2*emb_size, but MessagePassing is expected to return emb_size
         self.post_mp = make_sequential(
-            2 * embedding_size, hidden_dim, embedding_size)
+            2 * config["mpnn_emb_size"], config["conv_hidden_dim"], config["mpnn_emb_size"], config["dropout"])
         self.post_mp.to(device)
 
     def forward(self, db):
         x = self.pad(db.x)
-        for _ in range(self.num_convs):
-            x = self.gcn(x, db.edge_index)
+        for gin in self.gins:
+            for _ in range(self.num_convs):
+                x = gin(x, db.edge_index)
+                x = torch.nn.functional.relu(x)
 
         pooled = torch.cat([pyg.nn.pool.global_add_pool(
             x, db.batch), pyg.nn.pool.global_mean_pool(x, db.batch)], dim=1)
@@ -83,10 +88,11 @@ class MessagePassing(torch.nn.Module):
 class EmbNN(torch.nn.Module):
     def __init__(self, config):
         super(EmbNN, self).__init__()
-        self.ct_embed = torch.nn.Embedding(celltype.count(), int(config["ct_emb_size"]))
-        self.mpnn = MessagePassing(int(config["mpnn_emb_size"]))
+        self.ct_embed = torch.nn.Embedding(
+            celltype.count(), config["ct_emb_size"])
+        self.mpnn = MessagePassing(config)
         self.out = make_sequential(
-            int(config["ct_emb_size"] + config["mpnn_emb_size"]), int(config["hidden_dim"]), num_classes())
+            config["ct_emb_size"] + config["mpnn_emb_size"], config["combiner_hidden_dim"], num_classes(), config["dropout"])
 
     def forward(self, db):
         ct_res = self.ct_embed(db.ct)
@@ -103,12 +109,16 @@ eval_loader = make_loader(eval_x_entries, eval_y, len(eval_x_entries))
 
 test_x_entries = data.get_test()
 # Placeholder values to build loader.
-test_y = np.empty((len(test_x_entries),num_classes()))
+test_y = np.empty((len(test_x_entries), num_classes()))
 test_loader = make_loader(test_x_entries, test_y, len(test_x_entries))
 
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 epochs = 100
 num_samples = 100
+
 
 def train_model(config, input_data):
     def do_train_epoch():
@@ -131,6 +141,7 @@ def train_model(config, input_data):
             return mrrmse.vectorized(model(eval_batch), eval_batch.y).item()
 
     model = EmbNN(config)
+    config["parameters"] = count_parameters(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=config["lr"])
     loss_fn = torch.nn.MSELoss()
 
@@ -143,17 +154,22 @@ def train_model(config, input_data):
             # This saves the model to the trial directory
             torch.save(model.state_dict(), "./model.pt")
 
+
 space = {
     "lr": hp.loguniform("lr", -10, -1),
-    "ct_emb_size": hp.quniform("ct_emb_size", 2, 100, 1),
-    "mpnn_emb_size": hp.quniform("mpnn_emb_size", 2, 100, 1),
-    "hidden_dim": hp.quniform("hidden_dim", 2, 100, 1),
+    "dropout": hp.uniform("dropout", 0, 1),
+    "ct_emb_size": scope.int(hp.qloguniform("ct_emb_size", 0, 3, 1)),
+    "mpnn_emb_size": scope.int(hp.qloguniform("mpnn_emb_size", 0, 3, 1)),
+    "combiner_hidden_dim": scope.int(hp.qloguniform("combiner_hidden_dim", 0, 3, 1)),
+    "conv_hidden_dim": scope.int(hp.qloguniform("conv_hidden_dim", 0, 3, 1)),
+    "num_convs": scope.int(hp.quniform("num_convs", 1, 10, 1)),
+    "conv_layers": scope.int(hp.quniform("conv_layers", 1, 2, 1)),
 }
 
 metric = "mrrmse"
 mode = "min"
 hyperopt_search = HyperOptSearch(space, metric=metric, mode=mode)
-scheduler = ASHAScheduler(metric=metric, mode=mode, max_t=epochs)
+scheduler = ASHAScheduler(metric=metric, grace_period=5, mode=mode, max_t=epochs)
 input_data = {
     "train_loader": train_loader,
     "eval_loader": eval_loader,
@@ -172,6 +188,7 @@ tuner = tune.Tuner(
 results = tuner.fit()
 
 best_result = results.get_best_result(metric, mode=mode)
+print(best_result.path)
 print("CONFIG:", best_result.config)
 print("METRICS:", best_result.metrics)
 
@@ -185,6 +202,3 @@ with torch.no_grad():
     model.eval()
     pred = model(test_batch).numpy()
     submission.make("gnn", pred)
-
-
-

@@ -18,6 +18,7 @@ from ray import train, tune
 from ray.tune.schedulers import ASHAScheduler
 from ray.tune.search.hyperopt import HyperOptSearch
 
+import utils
 import celltype
 import data
 import mrrmse
@@ -36,10 +37,6 @@ def get_fingerprint(smls):
     return to_numpy(fp)
 
 
-def to_tensor(lst):
-    return torch.tensor(np.array(lst), dtype=torch.float32)
-
-
 def convert_to_input(fpfn, x_entry):
     ct, smls = x_entry
     ct = celltype.one_hot(ct)
@@ -47,34 +44,18 @@ def convert_to_input(fpfn, x_entry):
     return np.concatenate([ct, mfp])
 
 
-def weight(x_entry):
-    ct, smiles = x_entry
-    if celltype.is_evaluation(ct):
-        return 1000
-    return 1
-
-
 fp_size = 2048
 embed_size = 256
 mfpgen = rdkit.Chem.rdFingerprintGenerator.GetMorganGenerator(radius=4,
                                                               fpSize=2048)
 
-
-def split_entries(x_entries):
-    weights = torch.tensor([weight(x_entry) for x_entry in x_entries])
-    x_ct = to_tensor([celltype.one_hot(ct) for ct, smls in x_entries])
-    x_smls = to_tensor([smiles.one_hot(smls)
-                        for ct, smls in x_entries])
-    return weights, x_ct, x_smls
-
-
 train_x_entries, train_y = data.get_train(data.Include.NonEvaluation)
-train_weights, train_x_ct, train_x_smls = split_entries(train_x_entries)
-train_y = to_tensor(train_y)
+train_weights, train_x_ct, train_x_smls = utils.split_entries(train_x_entries)
+train_y = utils.to_tensor(train_y)
 
 eval_x_entries, eval_y = data.get_train(data.Include.Evaluation)
-_, eval_x_ct, eval_x_smls = split_entries(eval_x_entries)
-eval_y = to_tensor(eval_y)
+_, eval_x_ct, eval_x_smls = utils.split_entries(eval_x_entries)
+eval_y = utils.to_tensor(eval_y)
 
 
 class EmbNN(torch.nn.Module):

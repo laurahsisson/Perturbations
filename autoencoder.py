@@ -1,7 +1,16 @@
 import torch
 import utils
 
-import data
+import pandas as pd
+import sklearn
+import sklearn.model_selection
+import mrrmse
+import tqdm
+
+df = pd.read_parquet("data/lincs.parquet")
+xdf,ydf = df.iloc[:,:6], df.iloc[:,6:]
+
+train,test = sklearn.model_selection.train_test_split(torch.from_numpy(ydf.to_numpy()))
 
 class AutoEncoder(torch.nn.Module):
     def __init__(self,config):
@@ -16,23 +25,36 @@ class AutoEncoder(torch.nn.Module):
         latent = torch.nn.functional.relu(latent)
         return self.decoder(latent)
 
-
-train_x_entries, train_y = data.get_train(data.Include.NonEvaluation)
-train_weights, train_x_ct, train_x_smls = utils.split_entries(train_x_entries)
-train_y = utils.to_tensor(train_y)
-
-eval_x_entries, eval_y = data.get_train(data.Include.Evaluation)
-_, eval_x_ct, eval_x_smls = utils.split_entries(eval_x_entries)
-eval_y = utils.to_tensor(eval_y)
-
-
 config = {
-    "input_dim" : train_y.shape[1],
+    "input_dim" : train.shape[1],
     "latent_dim": 256,
     "hidden_dim": 512,
     "dropout": .1,
 }
 
-model = AutoEncoder(config)
+def train_model():
+    def do_train_epoch():
+        model.train()
+        for batch in loader:
+            optimizer.zero_grad()
+            loss = lossfn(model(batch),batch)
+            loss.backward()
+            optimizer.step()
+        return loss
 
-print(model(train_y).shape)
+    def calc_test():
+        model.eval()
+        with torch.no_grad():
+            return mrrmse.vectorized(model(test),test)
+
+    loader = torch.utils.data.DataLoader(train, batch_size=128)
+    model = AutoEncoder(config)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+    lossfn = torch.nn.MSELoss()
+
+    for i in tqdm.tqdm(range(100)):
+        trnloss = do_train_epoch()
+        tstloss = calc_test()
+        print(trnloss,tstloss)
+
+train_model()

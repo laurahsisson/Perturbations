@@ -7,23 +7,17 @@ import sklearn.model_selection
 import mrrmse
 import tqdm
 
-df = pd.read_parquet("data/lincs.parquet")
-xdf,ydf = df.iloc[:,:6], df.iloc[:,6:]
-
-train,test = sklearn.model_selection.train_test_split(torch.from_numpy(ydf.to_numpy()))
-
 # Much of this code is borrowed from 
 # https://github.com/AntixK/PyTorch-VAE/tree/master
-
 class AutoEncoder(torch.nn.Module):
-    def __init__(self,config):
+    def __init__(self,target_dim,config):
         super(AutoEncoder,self).__init__()
 
         # These could be converted to a sequence of increase dimensions
         # like [32,64,128] .. 
-        self.encoder = utils.make_sequential(config["input_dim"],config["hidden_dim"],config["latent_dim"],config["dropout"])
+        self.encoder = utils.make_sequential(target_dim,config["hidden_dim"],config["latent_dim"],config["dropout"])
         # and decoder would be reversed.
-        self.decoder = utils.make_sequential(config["latent_dim"],config["hidden_dim"],config["input_dim"],config["dropout"])
+        self.decoder = utils.make_sequential(config["latent_dim"],config["hidden_dim"],target_dim,config["dropout"])
 
         # These would translate from the last dimension. But for now single layer is good enough.
         self.fc_mu = torch.nn.Linear(config["latent_dim"], config["latent_dim"])
@@ -46,12 +40,19 @@ class AutoEncoder(torch.nn.Module):
 
         return self.fc_mu(latent), self.fc_var(latent)
 
-    def forward(self,x):
+    # Keep the encoder/decoder models private by providing helper functions.
+    def latent(self,x):
         mu, log_var = self.encode(x)
-        z = self.reparameterize(mu, log_var)
-        return {"x_hat":self.decoder(z), "mu": mu, "log_var":log_var}
+        return {"z":self.reparameterize(mu, log_var), "mu": mu, "log_var":log_var}
 
-    def loss_function(self,fwd,x) -> dict:
+    def decode(self,z):
+        return self.decoder(z)
+
+    def forward(self,x):
+        latent = self.latent(x)
+        return {"x_hat":self.decode(latent["z"]), "mu": latent["mu"], "log_var":latent["log_var"]}
+
+    def loss_function(self,fwd,x):
         recons_loss = torch.nn.functional.mse_loss(fwd["x_hat"], x)
 
         kld_loss = torch.mean(-0.5 * torch.sum(1 + fwd["log_var"] - fwd["mu"] ** 2 - fwd["log_var"].exp(), dim = 1), dim = 0)
@@ -60,7 +61,6 @@ class AutoEncoder(torch.nn.Module):
         return {'loss': loss, 'Reconstruction_Loss':recons_loss.detach(), 'KLD':-kld_loss.detach()}
 
 config = {
-    "input_dim" : train.shape[1],
     "latent_dim": 256,
     "hidden_dim": 512,
     "dropout": .1,
@@ -84,7 +84,7 @@ def train_model():
             return mrrmse.vectorized(pred,test)
 
     loader = torch.utils.data.DataLoader(train, batch_size=128)
-    model = AutoEncoder(config)
+    model = AutoEncoder(target_dim=987,config=config)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
     lossfn = torch.nn.MSELoss()
 
@@ -94,4 +94,8 @@ def train_model():
         print(trnloss,tstloss)
 
 if __name__ == "__main__":
+    df = pd.read_parquet("data/lincs.parquet")
+    xdf,ydf = df.iloc[:,:6], df.iloc[:,6:]
+
+    train,test = sklearn.model_selection.train_test_split(torch.from_numpy(ydf.to_numpy()))
     train_model()

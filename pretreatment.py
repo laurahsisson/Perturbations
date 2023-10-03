@@ -8,8 +8,6 @@ df = pd.read_parquet("data/lincs.parquet")
 
 xdf,ydf = df.iloc[:,:TSM_IDX], df.iloc[:,TSM_IDX:]
 
-labels = xdf.values.tolist()
-
 def find_control(cell_id):
     # Could either return random or mean.
     valid_columns = df[(df["cell_id"]==cell_id) & (df["control"])]

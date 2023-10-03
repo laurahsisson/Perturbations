@@ -15,7 +15,6 @@ class AutoEncoder(torch.nn.Module):
 
         # These could be converted to a sequence of increase dimensions
         # like [32,64,128] .. 
-        print(f"TARGETDIM={target_dim}")
         self.encoder = utils.make_sequential(target_dim,config["hidden_dim"],config["latent_dim"],config["dropout"])
         # and decoder would be reversed.
         self.decoder = utils.make_sequential(config["latent_dim"],config["hidden_dim"],target_dim,config["dropout"])
@@ -87,7 +86,6 @@ def train_model():
     loader = torch.utils.data.DataLoader(train, batch_size=128)
     model = AutoEncoder(target_dim=978,config=config)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
-    lossfn = torch.nn.MSELoss()
 
     for i in tqdm.tqdm(range(100)):
         trnloss = do_train_epoch()

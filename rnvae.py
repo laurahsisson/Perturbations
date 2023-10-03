@@ -3,6 +3,10 @@
 import autoencoder
 import torch
 import utils
+import tqdm
+import sklearn
+import sklearn.model_selection
+import mrrmse
 
 loaded = torch.load("data/pretreatment.pt")
 print(f"Keys = {loaded[0].keys()}")
@@ -13,7 +17,9 @@ def get_idx(d,key):
 
 # Convert the columns we care about to idxs so that all values are numerical
 data = [{"pert_iname":get_idx(d,"pert_iname"),"cell_id":get_idx(d,"cell_id"),"pre_treatment":d["pre_treatment"].float(),"post_treatment":d["post_treatment"].float()} for d in loaded]
-loader = torch.utils.data.DataLoader(data, batch_size=128)
+train, test = sklearn.model_selection.train_test_split(data)
+train_loader = torch.utils.data.DataLoader(train, batch_size=128)
+test_loader = torch.utils.data.DataLoader(test, batch_size=128)
 
 class Translator(torch.nn.Module):
     def __init__(self,config):
@@ -61,11 +67,36 @@ config = {
     "kld_weight": 1,
 }
 
-model = RNVAE(target_dim=978,config=config)
-inp = next(iter(loader))
-fwd = model(inp)
-print(model.loss_function(fwd,inp))
+# inp = next(iter(loader))
+# fwd = model(inp)
+# print(model.loss_function(fwd,inp))
+
+def train_model():
+    model = RNVAE(target_dim=978,config=config)
+
+    def do_train_epoch():
+        model.train()
+        for batch in train_loader:
+            optimizer.zero_grad()
+            loss = model.loss_function(model(batch),batch)["loss"]
+            loss.backward()
+            optimizer.step()
+        return loss
+
+    def calc_test():
+        model.eval()
+        with torch.no_grad():
+            batch = next(iter(test_loader))
+            pred = model(batch)["x_hat"]
+            return mrrmse.vectorized(pred,batch["post_treatment"])
+
+    model = RNVAE(target_dim=978,config=config)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+
+    for i in tqdm.tqdm(range(100)):
+        trnloss = do_train_epoch()
+        tstloss = calc_test()
+        print(trnloss,tstloss)
 
 
-        
-
+train_model()

@@ -42,11 +42,11 @@ def test_datapoint(cell_col_name,row):
 # print(get_transcriptome(find_control(kaggle_df,"cell_type","B cells")))
 
 def make_data():
-    # lincs_cmpd_df = lincs_df[~lincs_df["control"]]
-    # lincs_dps = []
-    # for _, row in tqdm.tqdm(lincs_cmpd_df.iterrows(),total=lincs_cmpd_df.shape[0]):
-    #     lincs_dps.append(make_datapoint(LINCS_TSM_IDX,lincs_df,"cell_id",row))
-    # torch.save(lincs_dps,"data/lincs_pretreatment.pt")
+    lincs_cmpd_df = lincs_df[~lincs_df["control"]]
+    lincs_dps = []
+    for _, row in tqdm.tqdm(lincs_cmpd_df.iterrows(),total=lincs_cmpd_df.shape[0]):
+        lincs_dps.append(make_datapoint(LINCS_TSM_IDX,lincs_df,"cell_id",row))
+    torch.save(lincs_dps,"data/lincs_pretreatment.pt")
 
     kaggle_cmpd_df = kaggle_df[~kaggle_df["control"]]
     kaggle_dps = []
